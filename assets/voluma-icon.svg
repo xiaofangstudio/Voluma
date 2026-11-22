@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c8434f" />
+      <stop offset="1" stop-color="#96222e" />
+    </linearGradient>
+  </defs>
+
+  <!-- 底板 -->
+  <rect x="62" y="62" width="900" height="900" rx="230" fill="url(#base)" />
+  <path d="M292 63H732" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2" />
+  <path d="M292 961H732" stroke="#000000" stroke-opacity="0.10" stroke-width="2" />
+
+  <!-- 后页 -->
+  <rect x="360" y="300" width="330" height="470" rx="12" fill="#f3d7db" />
+  <!-- 前页 -->
+  <rect x="310" y="250" width="330" height="470" rx="12" fill="#ffffff" />
+
+  <!-- 折角 -->
+  <path d="M570 250H640V320Z" fill="#e7c4c9" />
+  <path d="M570 250V320H640" fill="none" stroke="#e0b6bc" stroke-width="2" />
+
+  <!-- 书签缎带 -->
+  <path d="M340 250V386L370 360L400 386V250Z" fill="#b02a37" />
+
+  <!-- 文字示意 -->
+  <rect x="350" y="404" width="190" height="12" rx="6" fill="#b02a37" opacity="0.9" />
+  <rect x="350" y="440" width="132" height="12" rx="6" fill="#b02a37" opacity="0.75" />
+
+  <!-- 家族记号 -->
+  <circle cx="870" cy="870" r="48" fill="#ffffff" fill-opacity="0.20" />
+</svg>
