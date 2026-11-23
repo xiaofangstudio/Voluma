@@ -6,6 +6,7 @@ import {
   IconContinuous,
   IconDouble,
   IconEllipse,
+  IconExport,
   IconFitWidth,
   IconForm,
   IconHighlight,
@@ -16,6 +17,7 @@ import {
   IconPages,
   IconPen,
   IconPin,
+  IconPrint,
   IconRect,
   IconSearch,
   IconSingle,
@@ -42,7 +44,9 @@ type Props = {
   saveState: SaveState;
   pagesOpen: boolean;
   formsOpen: boolean;
+  printOpen: boolean;
   formCount: number;
+  exportBusy: boolean;
   onOpen: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -53,6 +57,8 @@ type Props = {
   onTool: (t: AnnotTool) => void;
   onPages: () => void;
   onForms: () => void;
+  onPrint: () => void;
+  onExport: () => void;
   onClose: () => void;
 };
 
@@ -95,7 +101,9 @@ export default function TopBar({
   saveState,
   pagesOpen,
   formsOpen,
+  printOpen,
   formCount,
+  exportBusy,
   onOpen,
   onZoomIn,
   onZoomOut,
@@ -106,6 +114,8 @@ export default function TopBar({
   onTool,
   onPages,
   onForms,
+  onPrint,
+  onExport,
   onClose,
 }: Props) {
   return (
@@ -260,6 +270,29 @@ export default function TopBar({
         >
           <IconPages />
           <Tip text="页面管理" keyHint="F9" />
+        </button>
+      </div>
+
+      <span className="sep" />
+
+      <div className="group" role="group" aria-label="输出">
+        <button
+          className="iconbtn"
+          onClick={onPrint}
+          aria-pressed={printOpen}
+          aria-label="打印"
+        >
+          <IconPrint />
+          <Tip text="打印" keyHint="Ctrl+P" />
+        </button>
+        <button
+          className="iconbtn"
+          onClick={onExport}
+          disabled={exportBusy}
+          aria-label="导出无注释版"
+        >
+          <IconExport />
+          <Tip text="导出无注释版" keyHint="Ctrl+E" />
         </button>
       </div>
 

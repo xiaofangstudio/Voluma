@@ -47,6 +47,7 @@ export function baseName(path: string): string {
 
 export type PageResult = { pages: number; bytes: number };
 export type FormResult = { fields: number; bytes: number };
+export type ExportResult = { bytes: number; removed: number };
 
 export async function documentPageCount(path: string): Promise<number> {
   return invoke<number>("document_page_count", { path });
@@ -89,6 +90,13 @@ export async function flattenForm(
   payload: string
 ): Promise<FormResult> {
   return invoke<FormResult>("flatten_form", { path, dest, payload });
+}
+
+export async function exportWithoutAnnotations(
+  path: string,
+  dest: string
+): Promise<ExportResult> {
+  return invoke<ExportResult>("export_without_annotations", { path, dest });
 }
 
 export function humanSize(bytes: number): string {

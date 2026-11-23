@@ -1,6 +1,6 @@
 # Voluma · 小方工作室 PDF 工作台
 
-> **小方工作室 · 出品** ｜ 立项规格 `v1.0` ｜ 2026-11-22 ｜ 状态：M3 已落地（见 BUILD.md），下一步 M4 打印
+> **小方工作室 · 出品** ｜ 立项规格 `v1.0` ｜ 2026-11-23 ｜ 状态：M4 已落地（打印 + 不含注释导出），M5 自带 MCP 与 NSIS 安装包已完成，代码签名 / GitHub Release / FangBox 待做
 > 对标 Adobe Acrobat Reader / Foxit ｜ 全中文 ｜ 本地优先 ｜ 零账号 ｜ 零 AI ｜ MIT
 > **Papyra 办公套件四件套之一，办公线第一个开工**（底座最成熟、日常刚需最高频）
 > 套件分色：Penna 靛蓝 · Soroban 翠绿 · Lanterna 橙红 · **Voluma 绛红**
@@ -61,7 +61,8 @@
 | 注释写回 + `/AP` 外观流 | `lopdf` |
 | 页面操作（转/删/排/提取/插入） | `lopdf` |
 | 表单字段读写与展平 | `lopdf` + `ttf-parser`（中文矢量字形） |
-| 打印（M4） | 系统打印 API（GDI） |
+| 打印（M4） | 前端 PDF.js 渲染 + 系统 `window.print()` |
+| 不含注释导出（M4） | `lopdf` 删 `/Annots` 并清理孤立对象 |
 | 最近列表 / 阅读位置 | 前端 `localStorage`（`voluma.recents.v1`） |
 
 **命令清单（当前已实现）**：
@@ -71,9 +72,10 @@ read_document / file_exists / file_size
 read_annotations / save_annotations
 document_page_count / apply_page_plan / extract_pages
 save_form_values / flatten_form
+export_without_annotations
 ```
 
-后续再补 `print_run`。页面旋转/删除/重排/提取/插入由 `apply_page_plan` 与 `extract_pages` 两个命令覆盖，不拆成五个 IPC。
+打印不设 Rust 命令：前端把选中页重新渲染成打印 DOM，直接调 WebView2 的系统打印对话框，避免再走一遍 IPC 和 GDI 排版。页面旋转/删除/重排/提取/插入由 `apply_page_plan` 与 `extract_pages` 两个命令覆盖，不拆成五个 IPC。
 
 **红线**：翻页、缩放、注释绘制、文本选择全部前端 PDF.js；Rust 只做「一次调用、一次返回」的慢活，跨 IPC 的热路径一律禁止。
 
@@ -100,6 +102,28 @@ save_form_values / flatten_form
 - 展平：同一次命令里应用当前值，把每个 Widget 的 `/AP` 作为 Form XObject 压进页面内容流，删除 Widget 与 `/AcroForm`，另存目标文件；原文件不动。
 - 中文展平：Rust 用 `ttf-parser` 读取系统中文黑体（微软雅黑 / 思源黑体 / 苹方），把每个字转成 PDF 路径填充，**不嵌入字体、不依赖阅读器中文字体**；找不到字体时明确报错而不是输出乱码。
 - 限制：表单保存与注释保存是两次串行写盘；中文展平只输出矢量字形，文本不可再搜索/复制；数字签名会在任何写回后失效。
+
+### 4.6 打印与不含注释导出（M4）
+- 打印入口：顶栏打印机按钮或 `Ctrl+P`，`PrintPanel` 选页码范围（全部 / 当前 / 自定义 `1-3,5`）、版式（适应纸张 / 实际大小 / 每张 2 页 / 每张 4 页）。
+- 打印实现：先把待打印页按印刷 DPI 重新渲染，塞进 `#voluma-print` 专用 DOM，`@media print` 只显示这份 DOM、隐藏应用界面，再调 `window.print()` 打开 WebView2 的系统打印对话框；纸张、方向、双面、份数都在系统对话框设置。
+- 页面外观：渲染时 `annotationMode: ENABLE`，M2 注释的 `/AP` 外观会进画布；表单字段的当前外观也一并输出，打印前先 `flushSave`，保证打印的是刚填的值。
+- 页数与内存：≤24 页直接保留 144 DPI 画布；25 页起改 108 DPI 并转成压缩图片（PNG，120 页以上转 JPEG），40 页实测为 40 张 918×1188 图片，避免整份大文档把内存打满。
+- 版式：`@page` 控 A4 纵向 / A4 横向，边距 10mm；单页按可打印区域等比缩放；2-up 为 A4 横向两列，4-up 为 A4 纵向 2×2；实际大小按 PDF 原始英寸尺寸输出。
+- 分页稳定性：`@media print` 下先把 `html/body` 的 `font-size/line-height` 归零，避免打印根节点前出现 21px 匿名行盒把第 1 页顶出可打印区；每页只写标准 `break-after: page`，不再叠加旧的 `page-break-after`；页容器高度比可打印区再小 2mm 兜底。
+- 不含注释导出：`export_without_annotations` 复制原文件到内存，逐页过滤 `/Annots`，删掉非 `/Link`、非 `/Widget` 的注释，再 `prune_objects()` 清理孤立注释对象与外观流，保留表单字段和超链接；临时文件原子替换目标。
+- 验收：最终 Release 打印 5 页文档，系统预览正好 5 张，单页打印 1 张，2-up 3 张、4-up 2 张，无空白页；带高亮页打印后高亮可见；中文表单页打印值完整；导出含 1 条高亮的件，输出 0 注释、体积从 5274 降到 4610 字节；导出表单件仍保留 7 个 Widget。
+- 限制：打印是整份页面预渲染，超大文档仍是线性耗时（有逐页进度）；系统打印对话框自带页码筛选，应用内已先筛页，系统里保持「全部」即可，避免二次筛选。
+
+### 4.7 自带 MCP（M5）
+- 同一个 `Voluma.exe` 加 `--mcp` 就进入 stdio MCP 服务，不创建窗口、不联网；客户端配置 `command=Voluma.exe`、`args=["--mcp"]` 即可。
+- 5 个本地工具：`voluma_pdf_info`（只读元信息）、`voluma_extract_pages`（按页提取）、`voluma_export_clean`（不含注释导出，保留链接与表单）、`voluma_apply_page_plan`（原地重排/旋转/删除/插入）、`voluma_flatten_form`（表单展平，中文矢量）。
+- 协议走 stdout，日志走 stderr；所有路径是本机绝对路径。完整配置与示例见 `MCP.md`。
+- 验收：`node scripts/e2e-mcp.mjs` 拉起 exe，握手、tools/list、信息、提取 3 页、干净导出、表单展平 0 Widget、旋转第 1 页 90°、缺文件报 `isError` 全过。
+
+### 4.8 安装包（M5）
+- `npx tauri bundle --bundles nsis` 出 `Voluma_0.1.0_x64-setup.exe`：NSIS x64，1.97MiB，内置同一个带 `--mcp` 的 exe。
+- 安装包与主 exe 目前**未签名**，Windows SmartScreen 会提示未知发布者；正式发布前需补代码签名证书。
+- GitHub Release、FangBox 上架、安装/卸载真机流程仍待做。
 
 ## 五 文件格式
 
@@ -162,14 +186,14 @@ PDF 是外部标准，也是 Voluma 唯一的工作文件；不发明格式、�
 | M1 | 能读 | ✅ 三种阅读模式 + 目录缩略图 + 搜索 + 夜间反转 |
 | M2 | 能注 | ✅ 全套注释工具 + 注释列表 + 直接写回 PDF 的自动保存 |
 | M3 | 能改 | ✅ 页面管理五件事（转/删/重排/提取/插入）+ 表单填写保存 + 导出展平（含中文矢量展平） |
-| M4 | 能出 | 打印 + 不含注释导出 + 表单展平 |
-| M5 | 发布 | 安装包 + GitHub Release + 上架 FangBox |
+| M4 | 能出 | ✅ 打印（页码 / 适应纸张 / 实际大小 / 2-up / 4-up）+ 不含注释导出（保留链接与表单） |
+| M5 | 能接与发布 | ✅ 自带 MCP（`--mcp`，5 个工具）；✅ NSIS 安装包（未签名）；GitHub Release / FangBox 待做 |
 
 一期 = M0 到 M4。
 
 ## 八 性能与验收
 
-**性能红线**：100MB / 500 页 PDF 打开 ≤ 2s；翻页 ≤ 100ms（预渲染当前 ±2 页）；连续滚动内存 ≤ 400MB；缩略图批量 500 页 ≤ 10s（后台跑不卡 UI）；安装包 ≤ 60MB（M3 Release 单 exe 4.76MB，不含 pdfium）。
+**性能红线**：100MB / 500 页 PDF 打开 ≤ 2s；翻页 ≤ 100ms（预渲染当前 ±2 页）；连续滚动内存 ≤ 400MB；缩略图批量 500 页 ≤ 10s（后台跑不卡 UI）；安装包 ≤ 60MB（M5 Release 单 exe 4.83MB、NSIS 安装包 1.97MB，不含 pdfium）。
 
 **界面验收清单（节选）**：
 
@@ -181,13 +205,16 @@ PDF 是外部标准，也是 Voluma 唯一的工作文件；不发明格式、�
 - [ ] 首次保存留下 `.bak`，连续保存不覆盖原件
 - [ ] 提取页生成的新 PDF 在别的阅读器可开
 - [ ] 展平后的表单不可再编辑
+- [ ] 打印 5 页文档，系统预览正好 5 张，无空白尾页
+- [ ] 打印页带注释与表单当前值
+- [ ] 导出无注释版后，注释数为 0，链接与表单字段仍在
 - [ ] 缩放始终以光标为锚点，`Ctrl+0` 回 100%、`Ctrl+1` 适应宽度
 
 ## 九 待确认问题
 
 1. 注释一期走 sidecar + 导出写回，还是直接写回 PDF？——**已定：直接写回 PDF，注释即标准注释对象；不再有 sidecar。**
 2. 加密 PDF 一期只解密阅读，写加密（设密码）推二期，可接受？
-3. 安装包 60MB 红线是否接受（pdfium 动态链接约 10MB）？——**已定：M3 页面与表单用纯 lopdf，不引入 pdfium，单 exe 4.76MB。**
+3. 安装包 60MB 红线是否接受（pdfium 动态链接约 10MB）？——**已定：页面与表单用纯 lopdf，不引入 pdfium，M5 单 exe 4.83MB、NSIS 1.97MB。**
 4. 双页对开模式是否需要「封面单页优先」智能排版？
 
 ## 十 可参考的软件

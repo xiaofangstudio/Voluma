@@ -1923,6 +1923,268 @@ input {
   height: 15px;
 }
 
+/* ---------- M4 打印面板 ---------- */
+.print-panel {
+  width: min(560px, calc(100vw - 64px));
+}
+
+.print-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 22px 18px;
+  overflow-y: auto;
+}
+
+.print-block {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.print-label {
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.print-seg {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.print-seg button {
+  height: 29px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-13);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.print-seg button.on {
+  background: var(--ink);
+  color: #fff;
+}
+
+.print-range {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-13);
+  outline: none;
+}
+
+.print-range:focus {
+  border-color: rgba(176, 42, 55, 0.55);
+  box-shadow: 0 0 0 3px rgba(176, 42, 55, 0.12);
+}
+
+.print-note {
+  min-height: 16px;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+
+.print-note.warn {
+  color: var(--accent, #b02a37);
+}
+
+.print-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.print-layout {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 56px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-13);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.print-layout:hover {
+  background: #fff;
+  color: var(--text);
+}
+
+.print-layout.on {
+  border-color: rgba(176, 42, 55, 0.5);
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 0 0 3px rgba(176, 42, 55, 0.1);
+}
+
+.print-swatch {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 36px;
+  border: 1px solid rgba(36, 26, 29, 0.28);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.print-swatch.actual {
+  border-style: dashed;
+}
+
+.print-swatch.two {
+  width: 44px;
+  height: 32px;
+}
+
+.print-swatch.four {
+  width: 32px;
+  height: 40px;
+}
+
+.print-swatch-cells {
+  position: absolute;
+  inset: 2px;
+  display: grid;
+  gap: 2px;
+}
+
+.print-swatch.two .print-swatch-cells {
+  grid-template-columns: 1fr 1fr;
+}
+
+.print-swatch.four .print-swatch-cells {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.print-swatch-cells i {
+  border: 1px solid rgba(36, 26, 29, 0.2);
+  border-radius: 1px;
+  background: rgba(176, 42, 55, 0.07);
+}
+
+.print-tip {
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  line-height: 1.55;
+}
+
+/* ---------- 打印输出 ---------- */
+.print-root {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    /* 打印根节点前不能留匿名行盒：body 的换行文本会先占 21px，把第 1 页
+       顶出可打印区，Chromium 就会在第 1 页后补一张空白页。 */
+    font-size: 0;
+    line-height: 0;
+  }
+
+  #root {
+    display: none !important;
+  }
+
+  .print-root {
+    display: block !important;
+  }
+
+  .print-root .print-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    break-after: page;
+    overflow: hidden;
+  }
+
+  .print-root.layout-fit .print-page {
+    width: 100%;
+    height: 275mm;
+  }
+
+  .print-root.layout-actual .print-page {
+    width: auto;
+    height: auto;
+    display: block;
+  }
+
+  .print-root .print-sheet {
+    display: grid;
+    gap: 4mm;
+    break-after: page;
+  }
+
+  .print-root.layout-two .print-sheet {
+    grid-template-columns: 1fr 1fr;
+    width: 274mm;
+    height: 188mm;
+  }
+
+  .print-root.layout-four .print-sheet {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    width: 188mm;
+    height: 274mm;
+  }
+
+  .print-root .print-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .print-root canvas,
+  .print-root img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .print-root.layout-actual canvas,
+  .print-root.layout-actual img {
+    max-width: none;
+    max-height: none;
+  }
+
+  .print-root .print-page:last-child,
+  .print-root .print-sheet:last-child {
+    break-after: auto;
+  }
+}
+
 @media (max-width: 1080px) {
   .form-backdrop { padding: 16px; }
   .form-panel { width: calc(100vw - 32px); max-height: calc(100vh - 32px); }
@@ -1930,4 +2192,6 @@ input {
   .form-foot { padding: 10px 16px 12px; }
   .form-hint { display: none; }
   .form-row { grid-template-columns: 56px minmax(0, 1.2fr) 40px minmax(0, 0.8fr); gap: 8px; }
+  .print-body { padding: 2px 16px 14px; }
+  .print-grid { grid-template-columns: 1fr; }
 }

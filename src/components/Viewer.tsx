@@ -4,6 +4,7 @@ import Sidebar from "./Sidebar";
 import Continuous, { type ContinuousHandle } from "./Continuous";
 import PageManager, { type PagePlan } from "./PageManager";
 import FormPanel from "./FormPanel";
+import PrintPanel from "./PrintPanel";
 import { IconChevronLeft, IconChevronRight } from "./Icons";
 import {
   loadBaseSizes,
@@ -41,7 +42,23 @@ import {
   type Annot,
   type AnnotKind,
 } from "../lib/annots";
-import { IS_TAURI, applyPagePlan, extractPages, flattenForm, readAnnotations, saveAnnotations, saveFormValues } from "../lib/tauri";
+import {
+  buildPrintDocument,
+  clearPrintDocument,
+  printNow,
+  schedulePrintCleanup,
+  type PrintLayout,
+} from "../lib/print";
+import {
+  IS_TAURI,
+  applyPagePlan,
+  exportWithoutAnnotations,
+  extractPages,
+  flattenForm,
+  readAnnotations,
+  saveAnnotations,
+  saveFormValues,
+} from "../lib/tauri";
 
 export type DocHandle = {
   path: string;
@@ -125,6 +142,12 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
   const [formsOpen, setFormsOpen] = useState(false);
   const [formBusy, setFormBusy] = useState(false);
 
+  /* ---------- M4 打印与导出 ---------- */
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printText, setPrintText] = useState("");
+  const [exportBusy, setExportBusy] = useState(false);
+
   const toolRef = useRef<AnnotTool>(tool);
   const colorRef = useRef(color);
   const annotsRef = useRef<Annot[]>(annots);
@@ -191,6 +214,9 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     formWidgetsRef.current = [];
     savedFormRef.current = "";
     setFormsOpen(false);
+    setPrintOpen(false);
+    setPrintBusy(false);
+    clearPrintDocument();
 
     openPdf(doc.data)
       .then(async (d) => {
@@ -478,6 +504,95 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
       setFormBusy(false);
     }
   }, [doc.path, doc.name, flushSave, onNotice]);
+
+  /* ---------- M4 打印与导出 ---------- */
+  const togglePrint = useCallback(() => {
+    if (printOpen) {
+      if (!printBusy) setPrintOpen(false);
+      return;
+    }
+    if (loading) {
+      onNotice("文档还在载入，稍后再试");
+      return;
+    }
+    if (!numPages) {
+      onNotice("没有可打印的页面");
+      return;
+    }
+    setPrintOpen(true);
+  }, [printOpen, printBusy, loading, numPages, onNotice]);
+
+  const runPrint = useCallback(
+    async (pages: number[], layout: PrintLayout) => {
+      const d = docRef.current;
+      if (!d) {
+        onNotice("文档尚未就绪");
+        return;
+      }
+      if (!pages.length) {
+        onNotice("没有选中要打印的页面");
+        return;
+      }
+      setPrintBusy(true);
+      setPrintText("正在保存当前修改…");
+      try {
+        await flushSave();
+        await buildPrintDocument({
+          doc: d,
+          pages,
+          layout,
+          onProgress: (done, total) => setPrintText(`正在生成第 ${done}/${total} 页…`),
+        });
+        setPrintText("正在打开系统打印对话框…");
+        await new Promise((r) => window.setTimeout(r, 80));
+        setPrintOpen(false);
+        await new Promise((r) => window.setTimeout(r, 120));
+        schedulePrintCleanup();
+        printNow();
+      } catch (e) {
+        clearPrintDocument();
+        onNotice(`打印准备失败：${String(e)}`);
+        setPrintOpen(false);
+      } finally {
+        setPrintBusy(false);
+        setPrintText("");
+      }
+    },
+    [flushSave, onNotice]
+  );
+
+  const exportClean = useCallback(async () => {
+    if (!IS_TAURI || doc.path.startsWith("browser:")) {
+      onNotice("导出无注释版只在桌面版可用");
+      return;
+    }
+    if (exportBusy) return;
+    setExportBusy(true);
+    try {
+      await flushSave();
+      const sep = doc.path.includes("\\") ? "\\" : "/";
+      const cut = doc.path.lastIndexOf(sep);
+      const dir = cut >= 0 ? doc.path.slice(0, cut + 1) : "";
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dest = await save({
+        title: "导出无注释版 PDF",
+        defaultPath: `${dir}${doc.name}-无注释.pdf`,
+        filters: [{ name: "PDF 文档", extensions: ["pdf"] }],
+      });
+      if (typeof dest !== "string") return;
+      const res = await exportWithoutAnnotations(doc.path, dest);
+      const name = dest.split(/[\\/]/).pop() ?? dest;
+      onNotice(
+        res.removed > 0
+          ? `已导出无注释版：${name}（移除 ${res.removed} 处注释）`
+          : `已导出无注释版：${name}（原件没有可移除的注释）`
+      );
+    } catch (e) {
+      onNotice(`导出失败：${String(e)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  }, [doc.path, doc.name, exportBusy, flushSave, onNotice]);
 
   /* ---------- 全页尺寸 ---------- */
   useEffect(() => {
@@ -1071,6 +1186,13 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
 
+      if (printOpen) {
+        if (e.key === "Escape" && !printBusy) {
+          e.preventDefault();
+          setPrintOpen(false);
+        }
+        return;
+      }
       if (e.key === "F9") {
         e.preventDefault();
         togglePages();
@@ -1105,6 +1227,16 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         e.preventDefault();
         setPanel("search");
         window.setTimeout(() => searchInput.current?.focus(), 30);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        togglePrint();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        void exportClean();
         return;
       }
       if (typing) return;
@@ -1179,7 +1311,11 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [goNext, goPrev, goTo, numPages, fit, zoomIn, zoomOut, actual, requestClose, panel, togglePanel, composer, tool, flushSave, pmOpen, togglePages, formsOpen, toggleForms]);
+  }, [goNext, goPrev, goTo, numPages, fit, zoomIn, zoomOut, actual, requestClose, panel, togglePanel, composer, tool, flushSave, pmOpen, togglePages, formsOpen, toggleForms, printOpen, printBusy, togglePrint, exportClean]);
+
+  useEffect(() => {
+    return () => clearPrintDocument();
+  }, []);
 
   useEffect(() => {
     if (panel === "search") window.setTimeout(() => searchInput.current?.focus(), 30);
@@ -1267,7 +1403,9 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         saveState={saveState}
         pagesOpen={pmOpen}
         formsOpen={formsOpen}
+        printOpen={printOpen}
         formCount={formFieldCount}
+        exportBusy={exportBusy}
         onOpen={requestOpen}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
@@ -1278,6 +1416,8 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         onTool={setTool}
         onPages={togglePages}
         onForms={toggleForms}
+        onPrint={togglePrint}
+        onExport={() => void exportClean()}
         onClose={requestClose}
       />
 
@@ -1470,6 +1610,17 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
           onGoPage={goTo}
           onSave={saveFormsNow}
           onFlatten={flattenForms}
+        />
+      )}
+
+      {printOpen && (
+        <PrintPanel
+          total={numPages}
+          current={page}
+          busy={printBusy}
+          busyText={printText || "正在准备打印…"}
+          onClose={() => setPrintOpen(false)}
+          onPrint={runPrint}
         />
       )}
     </div>

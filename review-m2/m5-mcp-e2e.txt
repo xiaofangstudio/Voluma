@@ -1,0 +1,11 @@
+[voluma-mcp] stdio server ready
+server voluma 0.1.0 2024-11-05
+tools voluma_pdf_info, voluma_extract_pages, voluma_export_clean, voluma_apply_page_plan, voluma_flatten_form
+info 5 pages 612x792
+extract 3 pages
+clean 4610 bytes 0 removed
+flatten 8919 bytes, widgets 0
+plan 5 pages, page1 rotate 90
+error path ok: 文件不存在
+[voluma-mcp] bye
+MCP OK

@@ -242,6 +242,23 @@ export const IconDoc = (p: Props) => (
 );
 
 /** 20px 版应用标：两页错位 + 缎带 */
+export const IconPrint = (p: Props) => (
+  <Svg {...p}>
+    <path {...stroke} d="M5.2 7.4V3.4h9.6v4" />
+    <rect {...stroke} x="2.8" y="7.4" width="14.4" height="6.4" rx="1" />
+    <path {...stroke} d="M5.2 11.4h9.6v5H5.2z" />
+    <rect fill="currentColor" stroke="none" x="12.9" y="9" width="1.4" height="1.4" rx=".3" />
+  </Svg>
+);
+
+export const IconExport = (p: Props) => (
+  <Svg {...p}>
+    <path {...stroke} d="M4 3.4h7.4l3.8 3.8v9.4H4z" />
+    <path {...stroke} d="M11.2 3.4v4h4" />
+    <path {...stroke} d="M7 13.6v-4.4M5.2 10.6l1.8-1.8 1.8 1.8" />
+  </Svg>
+);
+
 export const BrandMark = ({ size = 20, className }: Props) => (
   <svg
     className={className}

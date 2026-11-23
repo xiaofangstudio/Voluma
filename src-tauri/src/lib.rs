@@ -41,7 +41,8 @@ pub fn run() {
             pages::extract_pages,
             pages::document_page_count,
             form::save_form_values,
-            form::flatten_form
+            form::flatten_form,
+            export::export_without_annotations
         ])
         .run(tauri::generate_context!())
         .expect("运行 Voluma 时出错");
@@ -53,6 +54,13 @@ pub fn run() {
 
 mod pages;
 mod form;
+mod export;
+
+/* ------------------------------------------------------------------ */
+/* 自带 MCP：同一个 exe 用 --mcp 启动 stdio 服务                         */
+/* ------------------------------------------------------------------ */
+
+pub mod mcp;
 
 /* ------------------------------------------------------------------ */
 /* 注释直接写成 PDF 标准注释对象（不再使用 sidecar）                       */
