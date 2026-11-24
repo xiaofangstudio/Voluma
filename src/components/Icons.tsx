@@ -74,6 +74,20 @@ export const IconMoon = (p: Props) => (
   </Svg>
 );
 
+export const IconTheme = (p: Props) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="10" cy="10" r="7.1" />
+    <path fill="currentColor" stroke="none" opacity=".22" d="M10 2.9a7.1 7.1 0 0 1 0 14.2Z" />
+    <path {...stroke} d="M10 2.9v14.2" />
+  </Svg>
+);
+
+export const IconCheck = (p: Props) => (
+  <Svg {...p}>
+    <path {...stroke} d="M3.6 10.4 7.9 14.6 16.4 5.6" />
+  </Svg>
+);
+
 export const IconSearch = (p: Props) => (
   <Svg {...p}>
     <circle {...stroke} cx="8.7" cy="8.7" r="4.7" />
@@ -233,6 +247,16 @@ export const IconForm = (p: Props) => (
   </Svg>
 );
 
+/** 工具台：三个方块拼成一组，用来开合并 / 拆分 / 裁切 */
+export const IconToolkit = (p: Props) => (
+  <Svg {...p}>
+    <rect {...stroke} x="2.8" y="3.2" width="6" height="6" rx="1" />
+    <rect {...stroke} x="11.2" y="3.2" width="6" height="6" rx="1" />
+    <rect {...stroke} x="2.8" y="11.2" width="6" height="5.6" rx="1" />
+    <path {...stroke} d="M11.2 14h6M14.2 11l2.8 3-2.8 3" />
+  </Svg>
+);
+
 export const IconDoc = (p: Props) => (
   <Svg {...p}>
     <path {...stroke} d="M5 2.8h7l3 3v11.4H5z" />
@@ -256,6 +280,33 @@ export const IconExport = (p: Props) => (
     <path {...stroke} d="M4 3.4h7.4l3.8 3.8v9.4H4z" />
     <path {...stroke} d="M11.2 3.4v4h4" />
     <path {...stroke} d="M7 13.6v-4.4M5.2 10.6l1.8-1.8 1.8 1.8" />
+  </Svg>
+);
+
+export const IconSpeaker = (p: Props) => (
+  <Svg {...p}>
+    <path {...stroke} d="M3.2 8.2v3.6h2.6l3.4 2.8V5.4L5.8 8.2Z" />
+    <path {...stroke} d="M12 7.4a3.4 3.4 0 0 1 0 5.2" />
+    <path {...stroke} d="M14.4 5.2a6.6 6.6 0 0 1 0 9.6" />
+  </Svg>
+);
+
+export const IconPlay = (p: Props) => (
+  <Svg {...p}>
+    <path fill="currentColor" stroke="none" d="M6.8 4.2 15 9.1a1.05 1.05 0 0 1 0 1.8l-8.2 4.9A1.05 1.05 0 0 1 5.4 14.9V5.1a1.05 1.05 0 0 1 1.4-1Z" />
+  </Svg>
+);
+
+export const IconPause = (p: Props) => (
+  <Svg {...p}>
+    <rect fill="currentColor" stroke="none" x="5.2" y="4.2" width="3.2" height="11.6" rx="1.1" />
+    <rect fill="currentColor" stroke="none" x="11.6" y="4.2" width="3.2" height="11.6" rx="1.1" />
+  </Svg>
+);
+
+export const IconStop = (p: Props) => (
+  <Svg {...p}>
+    <rect fill="currentColor" stroke="none" x="4.3" y="4.3" width="11.4" height="11.4" rx="2" />
   </Svg>
 );
 

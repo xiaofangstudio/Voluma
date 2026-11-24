@@ -3,8 +3,10 @@ import TopBar, { type AnnotTool, type PanelKind, type SaveState, type ViewMode }
 import Sidebar from "./Sidebar";
 import Continuous, { type ContinuousHandle } from "./Continuous";
 import PageManager, { type PagePlan } from "./PageManager";
+import ToolkitPanel from "./ToolkitPanel";
 import FormPanel from "./FormPanel";
 import PrintPanel from "./PrintPanel";
+import TtsBar from "./TtsBar";
 import { IconChevronLeft, IconChevronRight } from "./Icons";
 import {
   loadBaseSizes,
@@ -20,6 +22,7 @@ import {
   type PDFDocumentProxy,
   type SearchHit,
 } from "../lib/pdf";
+import { extractPageSegments, readTtsPrefs, saveTtsPrefs, type TtsSegment, type TtsStatus } from "../lib/tts";
 import {
   collectFormValues,
   renderWidgetLayer,
@@ -135,7 +138,19 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
   } | null>(null);
   const [draftText, setDraftText] = useState("");
   const [pmOpen, setPmOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [pageBusy, setPageBusy] = useState(false);
+
+  /* ---------- M8 朗读 ---------- */
+  const [ttsOpen, setTtsOpen] = useState(false);
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus>("idle");
+  const [ttsPage, setTtsPage] = useState(1);
+  const [ttsSegments, setTtsSegments] = useState<TtsSegment[]>([]);
+  const [ttsIndex, setTtsIndex] = useState(0);
+  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [ttsVoiceName, setTtsVoiceName] = useState(() => readTtsPrefs().voiceName);
+  const [ttsRate, setTtsRate] = useState(() => readTtsPrefs().rate);
+  const [ttsMessage, setTtsMessage] = useState("");
 
   /* ---------- M3 表单 ---------- */
   const [formWidgets, setFormWidgets] = useState<FormWidget[]>([]);
@@ -152,10 +167,19 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
   const colorRef = useRef(color);
   const annotsRef = useRef<Annot[]>(annots);
   const selectedRef = useRef<string | null>(selectedAnnot);
+  const ttsToggleRef = useRef<() => void>(() => {});
   const loadedRef = useRef(false);
   const savedPayloadRef = useRef("");
   const savedFormRef = useRef("");
   const formWidgetsRef = useRef<FormWidget[]>([]);
+  const ttsCacheRef = useRef(new Map<number, TtsSegment[]>());
+  const ttsRunRef = useRef(0);
+  const ttsPageRef = useRef(1);
+  const ttsIndexRef = useRef(0);
+  const ttsStatusRef = useRef<TtsStatus>("idle");
+  const ttsVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const ttsVoiceRef = useRef("");
+  const ttsRateRef = useRef(1);
   const savingRef = useRef(false);
   const pendingRef = useRef(false);
   const saveTimer = useRef(0);
@@ -163,6 +187,9 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
   colorRef.current = color;
   annotsRef.current = annots;
   selectedRef.current = selectedAnnot;
+  ttsVoiceRef.current = ttsVoiceName;
+  ttsRateRef.current = ttsRate;
+  ttsStatusRef.current = ttsStatus;
 
   const payload = useMemo(() => JSON.stringify(toPayload(annots)), [annots]);
 
@@ -216,6 +243,7 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     setFormsOpen(false);
     setPrintOpen(false);
     setPrintBusy(false);
+    setToolsOpen(false);
     clearPrintDocument();
 
     openPdf(doc.data)
@@ -405,6 +433,25 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     }
     setPmOpen(true);
   }, [pmOpen, doc.path, loading, numPages, onNotice]);
+
+  /* ---------- M6 PDF 工具 ---------- */
+  const toggleTools = useCallback(() => {
+    if (toolsOpen) {
+      setToolsOpen(false);
+      return;
+    }
+    if (!IS_TAURI || doc.path.startsWith("browser:")) {
+      onNotice("合并 / 拆分 / 裁切只在桌面版可用");
+      return;
+    }
+    if (loading || !numPages) {
+      onNotice("PDF 还在解析，稍等一下");
+      return;
+    }
+    setPmOpen(false);
+    setFormsOpen(false);
+    setToolsOpen(true);
+  }, [toolsOpen, doc.path, loading, numPages, onNotice]);
 
   const applyPages = useCallback(
     async (plan: PagePlan) => {
@@ -972,6 +1019,50 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     });
   }, [query, hitPage, mode, page]);
 
+  /* ---------- 朗读句高亮 ---------- */
+  useEffect(() => {
+    const host = contentRef.current;
+    const clear = () => {
+      host?.querySelectorAll(".tts-focus").forEach((el) => el.remove());
+    };
+    clear();
+    if (!ttsOpen || ttsStatus === "idle" || ttsStatus === "done" || ttsStatus === "error" || !ttsSegments.length) return;
+    const seg = ttsSegments[ttsIndex];
+    if (!seg) return;
+    let cancelled = false;
+    let timer = 0;
+    const paint = (tries = 0) => {
+      if (cancelled) return;
+      const wrap = host?.querySelector<HTMLElement>(`.page-wrap[data-page="${ttsPage}"]`);
+      const meta = wrap ? pageMeta(wrap) : undefined;
+      if (!wrap || !meta) {
+        if (tries < 8) timer = window.setTimeout(() => paint(tries + 1), 180);
+        return;
+      }
+      clear();
+      const layer = document.createElement("div");
+      layer.className = "tts-focus";
+      for (const rect of seg.rects) {
+        const r = cssRect(meta.viewport, rect);
+        if (r.w < 0.5 || r.h < 0.5) continue;
+        const line = document.createElement("span");
+        line.className = "tts-line";
+        line.style.left = `${r.x}px`;
+        line.style.top = `${r.y}px`;
+        line.style.width = `${r.w}px`;
+        line.style.height = `${r.h}px`;
+        layer.appendChild(line);
+      }
+      if (layer.childElementCount) wrap.appendChild(layer);
+    };
+    paint();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      clear();
+    };
+  }, [ttsOpen, ttsStatus, ttsPage, ttsIndex, ttsSegments, mode, page]);
+
   /* 注释覆盖层随页面/缩放/选中重绘 */
   useEffect(() => {
     repaintAnnotations(contentRef.current, annots, selectedAnnot);
@@ -1045,6 +1136,275 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
   const navStep = mode === "double" ? 2 : 1;
   const goPrev = useCallback(() => goTo(page - navStep), [goTo, page, navStep]);
   const goNext = useCallback(() => goTo(page + navStep), [goTo, page, navStep]);
+
+  /* ---------- M8 朗读 ---------- */
+  const updateTtsStatus = (s: TtsStatus) => {
+    ttsStatusRef.current = s;
+    setTtsStatus(s);
+  };
+
+  const ensureVoices = async (): Promise<SpeechSynthesisVoice[]> => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
+    let list = window.speechSynthesis.getVoices();
+    if (!list.length) {
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.speechSynthesis.removeEventListener("voiceschanged", finish);
+          resolve();
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", finish);
+        window.setTimeout(finish, 1200);
+      });
+      list = window.speechSynthesis.getVoices();
+    }
+    const all = list;
+    const local = all.filter((v) => v.localService);
+    list = local.length ? local : all;
+    ttsVoicesRef.current = list;
+    setTtsVoices(list);
+    if (list.length) {
+      const picked =
+        list.find((v) => v.name === ttsVoiceRef.current) ||
+        list.find((v) => v.lang.toLowerCase().startsWith("zh")) ||
+        list[0];
+      if (picked && picked.name !== ttsVoiceRef.current) {
+        ttsVoiceRef.current = picked.name;
+        setTtsVoiceName(picked.name);
+      }
+    }
+    return list;
+  };
+
+  const loadTtsPage = async (p: number): Promise<TtsSegment[]> => {
+    const cached = ttsCacheRef.current.get(p);
+    if (cached) return cached;
+    const d = docRef.current;
+    if (!d) return [];
+    const segs = await extractPageSegments(d, p);
+    ttsCacheRef.current.set(p, segs);
+    return segs;
+  };
+
+  const finishTts = (message: string) => {
+    ttsRunRef.current++;
+    window.speechSynthesis.cancel();
+    updateTtsStatus("done");
+    setTtsMessage(message);
+    ttsIndexRef.current = 0;
+    setTtsIndex(0);
+    setTtsSegments([]);
+  };
+
+  const advanceTts = async (p: number, i: number, run: number) => {
+    if (run !== ttsRunRef.current) return;
+    const segs = ttsCacheRef.current.get(p) ?? [];
+    const total = docRef.current?.numPages ?? numPages;
+    if (i + 1 < segs.length) {
+      await speakTts(p, i + 1, run);
+    } else if (p < total) {
+      await speakTts(p + 1, 0, run);
+    } else {
+      finishTts("已读完最后一页。");
+    }
+  };
+
+  const speakTts = async (p: number, i: number, run: number) => {
+    if (run !== ttsRunRef.current) return;
+    const total = docRef.current?.numPages ?? numPages;
+    if (p < 1 || p > total) {
+      finishTts("没有更多可朗读的内容。");
+      return;
+    }
+    if (!ttsCacheRef.current.has(p)) updateTtsStatus("loading");
+    let segs: TtsSegment[];
+    try {
+      segs = await loadTtsPage(p);
+    } catch {
+      if (run !== ttsRunRef.current) return;
+      updateTtsStatus("error");
+      setTtsMessage("这一页的文字提取失败，换一页试试。");
+      return;
+    }
+    if (run !== ttsRunRef.current) return;
+    if (!segs.length) {
+      if (p < total) {
+        await speakTts(p + 1, 0, run);
+      } else {
+        finishTts("这一页及之后没有可朗读的文字。");
+      }
+      return;
+    }
+    if (i < 0) i = segs.length - 1;
+    if (i >= segs.length) i = 0;
+    const seg = segs[i];
+    ttsPageRef.current = p;
+    ttsIndexRef.current = i;
+    setTtsPage(p);
+    setTtsIndex(i);
+    setTtsSegments(segs);
+    setTtsMessage("");
+    goTo(p);
+
+    const voices = ttsVoicesRef.current;
+    const voice =
+      voices.find((v) => v.name === ttsVoiceRef.current) ||
+      voices.find((v) => v.lang.toLowerCase().startsWith("zh")) ||
+      voices[0];
+    if (!voice) {
+      updateTtsStatus("error");
+      setTtsMessage("系统没有可用语音，请先在 Windows 设置里安装中文语音包。");
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(seg.text);
+    utter.voice = voice;
+    utter.lang = voice.lang || "zh-CN";
+    utter.rate = ttsRateRef.current;
+    utter.pitch = 1;
+    utter.volume = 1;
+    utter.onstart = () => {
+      if (run === ttsRunRef.current) updateTtsStatus("speaking");
+    };
+    utter.onend = () => {
+      if (run !== ttsRunRef.current) return;
+      void advanceTts(p, i, run);
+    };
+    utter.onerror = (ev) => {
+      if (run !== ttsRunRef.current) return;
+      const err = String(ev.error || "");
+      if (err === "interrupted" || err === "canceled") return;
+      updateTtsStatus("error");
+      setTtsMessage(err === "not-allowed" ? "系统拒绝朗读，请检查声音设置。" : "朗读中断，点播放可重试。");
+    };
+    updateTtsStatus("speaking");
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  };
+
+  const startTts = async (p = ttsPageRef.current || clampPage(page), i = 0) => {
+    setTtsOpen(true);
+    setTtsMessage("");
+    const run = ++ttsRunRef.current;
+    updateTtsStatus("loading");
+    const voices = await ensureVoices();
+    if (run !== ttsRunRef.current) return;
+    if (!voices.length) {
+      updateTtsStatus("error");
+      setTtsMessage("系统没有可用语音，请先在 Windows 设置里安装中文语音包。");
+      return;
+    }
+    ttsPageRef.current = p;
+    ttsIndexRef.current = i;
+    setTtsPage(p);
+    setTtsIndex(i);
+    await speakTts(p, i, run);
+  };
+
+  const stopTts = (close = false) => {
+    ttsRunRef.current++;
+    window.speechSynthesis.cancel();
+    updateTtsStatus("idle");
+    setTtsMessage(close ? "" : "已停止。");
+    ttsIndexRef.current = 0;
+    setTtsIndex(0);
+    setTtsSegments([]);
+    const p = clampPage(page);
+    ttsPageRef.current = p;
+    setTtsPage(p);
+    if (close) setTtsOpen(false);
+  };
+
+  const toggleTts = () => {
+    if (ttsOpen) {
+      stopTts(true);
+      return;
+    }
+    setTtsOpen(true);
+    setTtsMessage("");
+    updateTtsStatus("idle");
+    setTtsSegments([]);
+    const p = clampPage(page);
+    ttsPageRef.current = p;
+    ttsIndexRef.current = 0;
+    setTtsPage(p);
+    setTtsIndex(0);
+    void ensureVoices();
+  };
+  ttsToggleRef.current = toggleTts;
+
+  const ttsPlayPause = () => {
+    if (ttsStatusRef.current === "speaking") {
+      window.speechSynthesis.pause();
+      updateTtsStatus("paused");
+      return;
+    }
+    if (ttsStatusRef.current === "paused") {
+      window.speechSynthesis.resume();
+      updateTtsStatus("speaking");
+      return;
+    }
+    void startTts(clampPage(page), 0);
+  };
+
+  const ttsStep = async (dir: 1 | -1) => {
+    if (ttsStatusRef.current === "idle" || ttsStatusRef.current === "error" || ttsStatusRef.current === "done") {
+      await startTts(clampPage(page), 0);
+      return;
+    }
+    if (ttsStatusRef.current === "loading") return;
+    const run = ++ttsRunRef.current;
+    window.speechSynthesis.cancel();
+    updateTtsStatus("loading");
+    let p = ttsPageRef.current;
+    let i = ttsIndexRef.current + dir;
+    let segs = ttsCacheRef.current.get(p) ?? [];
+    if (i < 0) {
+      if (p > 1) {
+        p -= 1;
+        try {
+          segs = await loadTtsPage(p);
+        } catch {
+          updateTtsStatus("error");
+          setTtsMessage("上一页文字提取失败。");
+          return;
+        }
+        i = segs.length - 1;
+      } else {
+        i = 0;
+      }
+    }
+    if (i >= segs.length) {
+      if (p < (docRef.current?.numPages ?? numPages)) {
+        p += 1;
+        i = 0;
+      } else {
+        finishTts("已读完最后一页。");
+        return;
+      }
+    }
+    await speakTts(p, i, run);
+  };
+
+  const setTtsVoice = (name: string) => {
+    ttsVoiceRef.current = name;
+    setTtsVoiceName(name);
+    saveTtsPrefs({ voiceName: name, rate: ttsRateRef.current });
+    if (ttsStatusRef.current === "speaking" || ttsStatusRef.current === "paused") {
+      const run = ++ttsRunRef.current;
+      window.speechSynthesis.cancel();
+      void speakTts(ttsPageRef.current, ttsIndexRef.current, run);
+    }
+  };
+
+  const changeTtsRate = (rate: number) => {
+    const v = Math.min(1.6, Math.max(0.7, rate));
+    ttsRateRef.current = v;
+    setTtsRate(v);
+    saveTtsPrefs({ voiceName: ttsVoiceRef.current, rate: v });
+  };
+
 
   const focusAnnot = useCallback(
     (a: Annot, tries = 0) => {
@@ -1203,6 +1563,18 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         toggleForms();
         return;
       }
+      if (e.key === "F11") {
+        e.preventDefault();
+        toggleTools();
+        return;
+      }
+      if (toolsOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setToolsOpen(false);
+        }
+        return;
+      }
       if (pmOpen) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1242,6 +1614,11 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
       if (typing) return;
 
       const key = e.key;
+      if (e.altKey && !e.ctrlKey && !e.metaKey && key.toLowerCase() === "r") {
+        e.preventDefault();
+        ttsToggleRef.current();
+        return;
+      }
       const toolKey: Record<string, AnnotKind> = {
         h: "highlight",
         u: "underline",
@@ -1301,6 +1678,9 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
       } else if ((e.ctrlKey || e.metaKey) && key === "0") {
         e.preventDefault();
         actual();
+      } else if (key === "Escape" && ttsOpen) {
+        e.preventDefault();
+        ttsToggleRef.current();
       } else if (key === "Escape") {
         e.preventDefault();
         if (composer) setComposer(null);
@@ -1311,10 +1691,17 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [goNext, goPrev, goTo, numPages, fit, zoomIn, zoomOut, actual, requestClose, panel, togglePanel, composer, tool, flushSave, pmOpen, togglePages, formsOpen, toggleForms, printOpen, printBusy, togglePrint, exportClean]);
+  }, [goNext, goPrev, goTo, numPages, fit, zoomIn, zoomOut, actual, requestClose, panel, togglePanel, composer, tool, flushSave, pmOpen, togglePages, formsOpen, toggleForms, printOpen, printBusy, togglePrint, exportClean, toolsOpen, toggleTools, ttsOpen]);
 
   useEffect(() => {
     return () => clearPrintDocument();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      ttsRunRef.current++;
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
   }, []);
 
   useEffect(() => {
@@ -1402,9 +1789,11 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         tool={tool}
         saveState={saveState}
         pagesOpen={pmOpen}
+        toolsOpen={toolsOpen}
         formsOpen={formsOpen}
         printOpen={printOpen}
         formCount={formFieldCount}
+        ttsOpen={ttsOpen}
         exportBusy={exportBusy}
         onOpen={requestOpen}
         onZoomIn={zoomIn}
@@ -1415,9 +1804,11 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         onPanel={togglePanel}
         onTool={setTool}
         onPages={togglePages}
+        onTools={toggleTools}
         onForms={toggleForms}
         onPrint={togglePrint}
         onExport={() => void exportClean()}
+        onTts={toggleTts}
         onClose={requestClose}
       />
 
@@ -1601,6 +1992,19 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
         />
       )}
 
+      {toolsOpen && docRef.current && (
+        <ToolkitPanel
+          doc={docRef.current}
+          numPages={numPages}
+          currentPage={page}
+          docName={doc.name}
+          docPath={doc.path}
+          onClose={() => setToolsOpen(false)}
+          onNotice={onNotice}
+          beforeRun={flushSave}
+        />
+      )}
+
       {formsOpen && docRef.current && (
         <FormPanel
           doc={docRef.current}
@@ -1623,6 +2027,27 @@ export default function Viewer({ doc, onClose, onProgress, onMeta, onNotice, onO
           onPrint={runPrint}
         />
       )}
+
+      <TtsBar
+        open={ttsOpen}
+        status={ttsStatus}
+        page={ttsPage}
+        totalPages={numPages}
+        segment={ttsIndex}
+        segmentCount={ttsSegments.length}
+        text={ttsSegments[ttsIndex]?.text ?? ""}
+        message={ttsMessage}
+        voices={ttsVoices}
+        voiceName={ttsVoiceName}
+        rate={ttsRate}
+        onPlayPause={ttsPlayPause}
+        onStop={() => stopTts(false)}
+        onPrev={() => void ttsStep(-1)}
+        onNext={() => void ttsStep(1)}
+        onVoice={setTtsVoice}
+        onRate={changeTtsRate}
+        onClose={() => stopTts(true)}
+      />
     </div>
   );
 }

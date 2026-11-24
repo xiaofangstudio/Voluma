@@ -1,0 +1,11 @@
+toolbar: 1280 28 buttons, no overflow
+voices: Huihui · zh-CN / Kangkang · zh-CN / Yaoyao · zh-CN
+playing: 朗读样本第一页 highlight lines 1
+pause and resume OK
+next segment OK: 朗读正在朗读第 1 页2/3 段
+stop OK
+auto page advance and finish OK in 16.4 s
+prefs persisted: Microsoft Yaoyao - Chinese (Simplified, PRC) 1.6
+start from current page OK
+900px fit: {"width":900,"overflow":[],"bar":{"left":70,"right":830,"bottom":546}}
+TTS UI OK

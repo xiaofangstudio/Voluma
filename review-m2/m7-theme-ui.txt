@@ -1,0 +1,3 @@
+paper stays white: rgb(255, 255, 255) 255,255,255
+toolbar: 1280 27 buttons, no overflow
+Theme UI OK

@@ -82,7 +82,7 @@ fn initialize_result(id: Value, params: &Value) -> Value {
                 "title": "Voluma PDF 工作台",
                 "version": env!("CARGO_PKG_VERSION")
             },
-            "instructions": "Voluma 的本地 PDF 工具。所有路径都是本机绝对路径；写操作会直接写盘，删页/重排默认不备份，除非 backup=true。"
+            "instructions": "Voluma 的本地 PDF 工具。所有路径都是本机绝对路径；合并 / 拆分 / 裁切只生成新文件，不覆盖原件；apply_page_plan 默认不备份，除非 backup=true。"
         }
     })
 }
@@ -122,6 +122,9 @@ fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "voluma_extract_pages" => tool_extract(args),
         "voluma_export_clean" => tool_export_clean(args),
         "voluma_apply_page_plan" => tool_apply_plan(args),
+        "voluma_merge_pdfs" => tool_merge(args),
+        "voluma_split_pdf" => tool_split(args),
+        "voluma_crop_pages" => tool_crop(args),
         "voluma_flatten_form" => tool_flatten(args),
         other => Err(format!("不认识的工具：{other}")),
     }
@@ -196,6 +199,72 @@ fn tool_definitions() -> Value {
                     "backup": { "type": "boolean", "description": "写回前是否保留 .bak，默认 false" }
                 },
                 "required": ["path"]
+            }
+        },
+        {
+            "name": "voluma_merge_pdfs",
+            "description": "按 inputs 顺序把多个 PDF 合并成一个新文件；原件不动，dest 不能与任一输入相同。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "inputs": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 2,
+                        "description": "参与合并的 PDF 绝对路径，按合并顺序排列"
+                    },
+                    "dest": { "type": "string", "description": "输出 PDF 绝对路径" }
+                },
+                "required": ["inputs", "dest"]
+            }
+        },
+        {
+            "name": "voluma_split_pdf",
+            "description": "拆分 PDF：mode=chunk 时每 chunk 页一份；mode=ranges 时 ranges 每个区间一份。默认输出到原目录，文件名加页码后缀，不覆盖已有文件。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "原 PDF 绝对路径" },
+                    "mode": { "type": "string", "enum": ["chunk", "ranges"], "description": "默认 chunk" },
+                    "chunk": { "type": "integer", "minimum": 1, "description": "mode=chunk 时每份页数，默认 1" },
+                    "ranges": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "mode=ranges 时的区间列表，如 [\"1-3\",\"4-6\"]"
+                    },
+                    "destDir": { "type": "string", "description": "输出目录，省略则原文件所在目录" },
+                    "prefix": { "type": "string", "description": "输出文件名前缀，省略则用原文件名" }
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "voluma_crop_pages",
+            "description": "按视觉方向四边内缩裁切页面，输出新文件；margins 单位毫米，pages 省略为全部页。resetCrop=true 时恢复整页。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "原 PDF 绝对路径" },
+                    "dest": { "type": "string", "description": "输出路径，省略则生成 <原名>-cropped.pdf" },
+                    "pages": {
+                        "oneOf": [
+                            { "type": "string", "description": "如 1-3,5；省略为全部页" },
+                            { "type": "array", "items": { "type": "integer" } }
+                        ]
+                    },
+                    "margins": {
+                        "type": "object",
+                        "properties": {
+                            "top": { "type": "number", "minimum": 0 },
+                            "right": { "type": "number", "minimum": 0 },
+                            "bottom": { "type": "number", "minimum": 0 },
+                            "left": { "type": "number", "minimum": 0 }
+                        },
+                        "description": "四边内缩，毫米；按当前页面视觉方向"
+                    },
+                    "resetCrop": { "type": "boolean", "description": "忽略 margins，恢复完整页面" }
+                },
+                "required": ["path", "margins"]
             }
         },
         {
@@ -307,6 +376,94 @@ fn tool_apply_plan(args: &Value) -> Result<Value, String> {
     let plan = json!({ "order": order, "rotations": rotations, "inserts": inserts });
     let r = crate::pages::apply_page_plan(path, plan.to_string(), backup)?;
     Ok(json!({ "pages": r.pages, "bytes": r.bytes }))
+}
+
+fn tool_merge(args: &Value) -> Result<Value, String> {
+    let dest = req_str(args, "dest")?;
+    let arr = args
+        .get("inputs")
+        .and_then(Value::as_array)
+        .ok_or("inputs 必须是数组")?;
+    let mut inputs = Vec::with_capacity(arr.len());
+    for item in arr {
+        let path = item
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or("inputs 里每一项都必须是 PDF 路径")?;
+        inputs.push(path);
+    }
+    let r = crate::pages::merge_documents(inputs, dest.clone())?;
+    Ok(json!({ "dest": dest, "pages": r.pages, "bytes": r.bytes }))
+}
+
+fn tool_split(args: &Value) -> Result<Value, String> {
+    let path = req_str(args, "path")?;
+    let mode = args.get("mode").and_then(Value::as_str).unwrap_or("chunk");
+    let chunk = args
+        .get("chunk")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1) as usize;
+    let ranges: Vec<String> = args
+        .get("ranges")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let req = json!({
+        "mode": mode,
+        "chunk": chunk,
+        "ranges": ranges,
+        "destDir": args.get("destDir").and_then(Value::as_str),
+        "prefix": args.get("prefix").and_then(Value::as_str)
+    });
+    let r = crate::pages::split_document(path, req.to_string())?;
+    let files: Vec<Value> = r
+        .files
+        .iter()
+        .map(|f| json!({ "path": f.path, "pages": f.pages, "bytes": f.bytes }))
+        .collect();
+    Ok(json!({ "files": files, "pages": r.pages }))
+}
+
+fn tool_crop(args: &Value) -> Result<Value, String> {
+    let path = req_str(args, "path")?;
+    let dest = optional_dest(args, &path, "-cropped.pdf")?;
+    ensure_distinct(&path, &dest)?;
+    let total = crate::pages::document_page_count(path.clone())?;
+    let pages = match args.get("pages") {
+        Some(v) => parse_pages(v, total)?,
+        None => Vec::new(),
+    };
+    let m = args.get("margins").ok_or("缺少 margins")?;
+    let mut margins = [0.0f64; 4];
+    for (i, key) in ["top", "right", "bottom", "left"].iter().enumerate() {
+        let v = m.get(*key).and_then(Value::as_f64).unwrap_or(0.0);
+        if !v.is_finite() || v < 0.0 {
+            return Err(format!("{key} 边距不能是负数"));
+        }
+        margins[i] = v;
+    }
+    let reset = args
+        .get("resetCrop")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !reset && margins.iter().all(|v| *v <= 0.0001) {
+        return Err("至少设置一边裁切边距，或 resetCrop=true".into());
+    }
+    let req = json!({
+        "dest": dest,
+        "pages": pages,
+        "margins": margins,
+        "resetCrop": reset
+    });
+    let r = crate::pages::crop_pages(path, req.to_string())?;
+    Ok(json!({ "dest": dest, "pages": r.pages, "bytes": r.bytes }))
 }
 
 fn tool_flatten(args: &Value) -> Result<Value, String> {
@@ -459,5 +616,28 @@ mod tests {
         assert!(parse_pages(&json!("1-6"), 5).is_err());
         assert!(parse_pages(&json!("3-1"), 5).is_err());
         assert!(parse_pages(&json!([]), 5).is_err());
+    }
+
+    #[test]
+    fn exposes_eight_tools() {
+        let defs = tool_definitions();
+        let list = defs.as_array().unwrap();
+        assert_eq!(list.len(), 8);
+        let names: Vec<&str> = list
+            .iter()
+            .filter_map(|t| t.get("name").and_then(Value::as_str))
+            .collect();
+        for name in [
+            "voluma_pdf_info",
+            "voluma_extract_pages",
+            "voluma_export_clean",
+            "voluma_apply_page_plan",
+            "voluma_merge_pdfs",
+            "voluma_split_pdf",
+            "voluma_crop_pages",
+            "voluma_flatten_form",
+        ] {
+            assert!(names.contains(&name), "缺少工具 {name}");
+        }
     }
 }

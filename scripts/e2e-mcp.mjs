@@ -8,10 +8,14 @@ const sample = path.resolve('assets/M0-阅读样本.pdf');
 const formSample = path.resolve('assets/M3-表单样本.pdf');
 const tmp = path.resolve('tmp-e2e');
 fs.mkdirSync(tmp, { recursive: true });
-for (const f of ['mcp-clean.pdf', 'mcp-extract.pdf', 'mcp-flat.pdf', 'mcp-plan.pdf']) {
+for (const f of ['mcp-clean.pdf', 'mcp-extract.pdf', 'mcp-flat.pdf', 'mcp-plan.pdf', 'mcp-merge.pdf', 'mcp-crop.pdf']) {
   try { fs.rmSync(path.join(tmp, f), { force: true }); } catch {}
 }
+for (const f of fs.readdirSync(tmp)) {
+  if (f.startsWith('mcp-split-')) fs.rmSync(path.join(tmp, f), { force: true });
+}
 fs.copyFileSync(sample, path.join(tmp, 'mcp-plan.pdf'));
+fs.copyFileSync(sample, path.join(tmp, 'mcp-merge-part.pdf'));
 
 const child = spawn(exe, ['--mcp'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 let nextId = 1;
@@ -75,9 +79,19 @@ child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initia
 const list = await call('tools/list', {});
 const names = list.tools.map((t) => t.name);
 console.log('tools', names.join(', '));
-for (const need of ['voluma_pdf_info', 'voluma_extract_pages', 'voluma_export_clean', 'voluma_apply_page_plan', 'voluma_flatten_form']) {
+for (const need of [
+  'voluma_pdf_info',
+  'voluma_extract_pages',
+  'voluma_export_clean',
+  'voluma_apply_page_plan',
+  'voluma_merge_pdfs',
+  'voluma_split_pdf',
+  'voluma_crop_pages',
+  'voluma_flatten_form',
+]) {
   if (!names.includes(need)) throw new Error(`missing tool ${need}`);
 }
+if (names.length !== 8) throw new Error(`expected 8 tools, got ${names.length}`);
 
 const info = textOf(await call('tools/call', { name: 'voluma_pdf_info', arguments: { path: sample } }));
 if (info.pages !== 5) throw new Error('sample should have 5 pages');
@@ -114,6 +128,52 @@ const plan = textOf(await call('tools/call', {
 const planInfo = textOf(await call('tools/call', { name: 'voluma_pdf_info', arguments: { path: path.join(tmp, 'mcp-plan.pdf') } }));
 if (planInfo.pageSizes[0].rotate !== 90) throw new Error('rotate 90 was not written');
 console.log('plan', plan.pages, 'pages, page1 rotate', planInfo.pageSizes[0].rotate);
+
+const merge = textOf(await call('tools/call', {
+  name: 'voluma_merge_pdfs',
+  arguments: {
+    inputs: [sample, path.join(tmp, 'mcp-merge-part.pdf')],
+    dest: path.join(tmp, 'mcp-merge.pdf'),
+  },
+}));
+const mergeDoc = await PDFDocument.load(fs.readFileSync(path.join(tmp, 'mcp-merge.pdf')));
+if (mergeDoc.getPageCount() !== 10) throw new Error('merge should produce 10 pages');
+console.log('merge', merge.pages, 'pages');
+
+const split = textOf(await call('tools/call', {
+  name: 'voluma_split_pdf',
+  arguments: {
+    path: sample,
+    mode: 'chunk',
+    chunk: 2,
+    destDir: tmp,
+    prefix: 'mcp-split',
+  },
+}));
+if (split.files.length !== 3) throw new Error('split should produce 3 files');
+for (const [i, f] of split.files.entries()) {
+  const d = await PDFDocument.load(fs.readFileSync(f.path));
+  const expected = [2, 2, 1][i];
+  if (d.getPageCount() !== expected) throw new Error(`split file ${i} pages ${d.getPageCount()}`);
+}
+console.log('split', split.files.length, 'files', split.files.map((f) => f.pages).join('/'));
+
+const crop = textOf(await call('tools/call', {
+  name: 'voluma_crop_pages',
+  arguments: {
+    path: sample,
+    dest: path.join(tmp, 'mcp-crop.pdf'),
+    pages: '1-3',
+    margins: { top: 10, right: 20, bottom: 30, left: 40 },
+  },
+}));
+const cropDoc = await PDFDocument.load(fs.readFileSync(path.join(tmp, 'mcp-crop.pdf')));
+const mm = 72 / 25.4;
+const box = cropDoc.getPage(0).getCropBox();
+if (Math.abs(box.x - 40 * mm) > 0.1 || Math.abs(box.y - 30 * mm) > 0.1) {
+  throw new Error(`crop box ${JSON.stringify(box)}`);
+}
+console.log('crop', crop.pages, 'pages', Math.round(box.width), 'x', Math.round(box.height), 'pt');
 
 const err = await call('tools/call', { name: 'voluma_pdf_info', arguments: { path: 'D:\\no-such-file.pdf' } });
 if (!err.isError) throw new Error('missing file should be isError');

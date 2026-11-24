@@ -1,0 +1,5 @@
+window css width: 1280
+merge ok: 10 pages
+split ok: 2,2,1
+crop ok: {"x":28.346457,"y":28.346457,"width":555.307103,"height":735.307103}
+Toolkit UI OK

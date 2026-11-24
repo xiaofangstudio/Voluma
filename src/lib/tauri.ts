@@ -69,6 +69,36 @@ export async function extractPages(
   return invoke<PageResult>("extract_pages", { path, pages, dest });
 }
 
+export type SplitFile = { path: string; pages: number; bytes: number };
+export type SplitResult = { files: SplitFile[]; pages: number };
+
+export type CropRequest = {
+  dest: string;
+  pages: number[];
+  margins: [number, number, number, number];
+  resetCrop: boolean;
+};
+
+export type SplitRequest = {
+  mode: "chunk" | "ranges";
+  chunk: number;
+  ranges: string[];
+  destDir?: string;
+  prefix?: string;
+};
+
+export async function mergePdfs(inputs: string[], dest: string): Promise<PageResult> {
+  return invoke<PageResult>("merge_documents", { inputs, dest });
+}
+
+export async function splitPdf(path: string, request: SplitRequest): Promise<SplitResult> {
+  return invoke<SplitResult>("split_document", { path, request: JSON.stringify(request) });
+}
+
+export async function cropPdf(path: string, request: CropRequest): Promise<PageResult> {
+  return invoke<PageResult>("crop_pages", { path, request: JSON.stringify(request) });
+}
+
 export type FormValue = {
   name: string;
   kind: "text" | "checkbox" | "radio" | "choice";

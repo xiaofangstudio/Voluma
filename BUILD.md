@@ -1,6 +1,6 @@
-# Voluma · 开发与构建说明（M0–M5）
+# Voluma · 开发与构建说明（M0–M8）
 
-> 小方工作室 ｜ Papyra 办公套件 ｜ 2026-11-23
+> 小方工作室 ｜ Papyra 办公套件 ｜ 2026-11-24
 
 ## 一 环境要求
 
@@ -40,7 +40,10 @@ node scripts/e2e-print-layouts.mjs# M4 2-up / 4-up 版式
 node scripts/e2e-print-long.mjs   # M4 40 页低内存打印路径（压缩图片）
 node scripts/e2e-print-paginate.mjs # M4 分页回归：全部 5 页、2-up 3 页、4-up 2 页
 node scripts/e2e-release-m4.mjs   # M4 Release 端到端：高亮 / 导出 / 系统预览
-node scripts/e2e-mcp.mjs          # M5 自带 MCP：握手 / 工具 / 提取 / 干净导出 / 展平 / 页面计划
+node scripts/e2e-mcp.mjs          # M5/M6 自带 MCP：握手 / 8 工具 / 提取 / 导出 / 合并 / 拆分 / 裁切 / 展平
+node scripts/e2e-toolkit.mjs      # M6 工具面板：真实 UI 合并 / 拆分 / 裁切（含原生选文件）
+node scripts/e2e-theme.mjs        # M7 主题：深/浅/跟随系统、持久化、纸面白色、顶栏不溢出
+node scripts/e2e-tts.mjs          # M8 朗读：系统语音 / 暂停继续 / 跳段 / 跨页 / 高亮 / 偏好 / 窄窗
 node scripts/e2e-export-clean.mjs # M4 不含注释导出（真实原生另存对话框）
 node scripts/e2e-export-form.mjs  # M4 导出时保留表单 Widget
 node scripts/probe-annots.mjs <pdf>  # 用 PDF.js 回读 Rust 写出的注释
@@ -65,6 +68,9 @@ Voluma/
       Sidebar.tsx      目录 / 缩略图 / 搜索 / 注释四合一侧栏
       Continuous.tsx   连续滚动（按页虚拟化）
       PageManager.tsx  页面缩略图 / 旋转 / 删除 / 重排 / 插入 / 提取
+      ToolkitPanel.tsx 合并 / 拆分 / 裁切三页签（含裁切实时预览）
+      ThemeMenu.tsx    界面主题弹层（跟随系统 / 浅色 / 深色）
+      TtsBar.tsx       底部朗读条（播放 / 跳段 / 语音 / 语速）
       FormPanel.tsx    表单字段列表 / 立即保存 / 导出展平
       PrintPanel.tsx   打印页码 / 版式面板
     lib/
@@ -74,15 +80,18 @@ Voluma/
       print.ts         打印页渲染、@page 版式、系统打印与清场
       recents.ts       最近文件（localStorage）
       tauri.ts         IPC（二进制直传、对话框、注释/页面/表单/导出命令）
+      theme.ts         主题偏好存储、系统深浅色监听、html[data-theme]
+      tts.ts           朗读分段（baseline 聚行 / 段落切分 / 220 字上限）、偏好读写
   src-tauri/
     src/lib.rs         read_document / file_exists / file_size
                        read_annotations / save_annotations（lopdf）
                        document_page_count / apply_page_plan / extract_pages
+                       merge_documents / split_document / crop_pages
                        save_form_values / flatten_form / export_without_annotations
-    src/pages.rs       页面计划（重排 + 删除 + 插入 PDF/图片）
+    src/pages.rs       页面计划（重排 + 删除 + 插入）、合并、拆分、CropBox 裁切
     src/form.rs        AcroForm 读写、展平、ttf-parser 中文字形转路径
     src/export.rs      不含注释导出、页面 /Annots 过滤、孤立对象清理
-    src/mcp.rs         --mcp stdio 服务、5 个本地 PDF 工具、JSON-RPC
+    src/mcp.rs         --mcp stdio 服务、8 个本地 PDF 工具、JSON-RPC
     icons/             1024 主图、32/128/256、icon.ico（16–256 七档）
 ```
 
@@ -212,7 +221,108 @@ M5 构建：加入 `mcp.rs` 后再打 `--no-bundle` 1m36s，`Voluma.exe` 5,059,5
 - 打印依赖 WebView2 的 `window.print()`：Windows 实测非阻塞并打开 Edge 打印预览；macOS / Linux 需按平台复验。
 - 不含注释导出保留 `/Popup` 之外的其他非注释对象由 `prune_objects` 清理；若第三方注释被其他结构树直接引用，可能被保留为孤立对象但不会显示。
 
-## 九 已定的实现口径
+## 九 M6 验收（已完成）
+
+M6 出口：二期首批三个无损工具，全部只生成新文件，原件不动；GUI 三页签 + MCP 三工具同轮验收。
+
+| 项 | 结果 |
+| --- | --- |
+| 入口 | 顶栏「PDF 工具」/ `F11`；一个窗口三页签：合并、拆分、裁切 |
+| 合并 | 当前文档固定参与，其他 PDF 可多选、删除、上下移；2 个 5 页样本合并为 10 页，页面 `/Parent` 全部指回页面树根 |
+| 合并清引用 | `/Outlines`、`/PageLabels`、`/AcroForm`、`/StructTreeRoot`、`/Names` 清掉，页面内容、注释与链接保留 |
+| 拆分（按份数） | 5 页按每 2 页一份，得到 2/2/1 三个文件；输出到指定目录，重名自动加序号 |
+| 拆分（按区间） | `1-2`、`4` 两段得到 2 个文件（2 页 / 1 页）；单测覆盖 |
+| 裁切 | 四边 10mm，Letter 612×792pt → CropBox `28.346, 28.346, 555.307×735.307pt`；只改 `/CropBox`，不重采样 |
+| 旋转页裁切 | 第 1 页先转 90°，视觉上边 10mm 正确映射到 PDF 左边（x0 +28.346pt） |
+| 恢复整页 | `resetCrop` 把 CropBox 重设为 MediaBox；单测通过 |
+| 预览 | PDF.js 页面 + 虚线成品框 + 外侧压暗，实时显示成品毫米尺寸；虚线框按实际页宽高换算（10mm 四边像素误差 ≤2px，e2e 断言）；零边距与边距过大时提交按钮均禁用 |
+| 安全 | 合并/裁切目标不能与任一原件相同；裁切后小于 18pt 直接拒绝；拆分不覆盖旧文件 |
+| 单测 | Rust 28 条全过（原 20 + M6 页码范围解析、合并、拆分 2 条、裁切 2 条、拒绝过裁、MCP 8 工具定义） |
+| MCP | `e2e-mcp.mjs` 在正式 exe 上 8 工具全过：合并 10 页、拆分 2/2/1、裁切 3 页 CropBox 正确 |
+| UI e2e | `e2e-toolkit.mjs` 在真实 Tauri WebView 完成合并 10 页、拆分 2/2/1、裁切 CropBox；断言 10mm 预览框四边像素位置；日志 `review-m2/m6-toolkit-ui.txt` |
+
+Release 数据：最终 `npx tauri build --no-bundle` 1m36s，`Voluma.exe` 5,117,952 字节（4.88MB），SHA256 `F73A0858065F36CCF4543082D053450724AD72A675362393F2F34D59F04957F3`；`npx tauri bundle --bundles nsis` 4.1s，安装包 2,083,541 字节（1.99MiB），SHA256 `F3F4ED7C2DD94E7DE4AC7AFEF8ECAC963EA5DDD083AA090370E562A2E56C2F99`。UI 实测窗口 1280 CSS px，顶栏工具入口未被挤出。
+
+截图：`review-m2/110-m6-main.png` 主界面、`111` 合并初始、`112` 拆分初始、`113` 裁切零边距（按钮禁用）、`114` 合并已加入第二份、`115` 合并完成 10 页、`116` 拆分完成 2/2/1、`117` 四边 10mm 预览、`118` 裁切完成。
+
+实现要点：
+- `pages.rs` 的合并把第一个 PDF 作为底稿，后续文件逐页导入；对象映射键改为 `(源文件序号, ObjectId)`，解决多文件同对象号撞车。
+- `set_page_tree` 统一把每个页面的 `/Parent` 指回根节点，修复提取 / 合并后页面仍指向旧中间节点的问题。
+- 拆分按份数或区间生成页面组，每组 clone 一份文档、重设页面树、清跨页引用；文件名 `前缀-起止页.pdf`，已存在则加 ` (2)`。
+- 裁切先取有效 CropBox（无则 MediaBox），把视觉四边按页面 `/Rotate` 换算到未旋转坐标，再写新 CropBox，并与 MediaBox 取交集。
+- 预览用 `renderThumbnail` 渲染当前页，按页面毫米宽高计算虚线框百分比；不额外生成预览文件。
+
+已知限制：
+- 合并件与拆分件不保留 AcroForm，字段退化为 Widget 外观；若后续要保表单，需要按页重建字段树。
+- 裁切不做自动白边识别，需手动输入四边毫米；裁切后注释 Rect 不重算，超出 CropBox 的部分由阅读器裁剪。
+- 拆分逐份重新序列化，超大文档按份数线性耗时；不做并行写盘。
+
+## 十 M7 验收（已完成）
+
+M7 出口：界面主题三态（跟随系统 / 浅色 / 深色）可切换、可记忆、跟随 Windows；所有界面有深色样式，PDF 纸面与打印输出不变。
+
+| 项 | 结果 |
+| --- | --- |
+| 入口 | 欢迎页底栏主题 chip + 阅读器顶栏半圆图标；弹层三选一，当前项打勾 |
+| 启动防闪 | `index.html` CSS 前内联脚本读 `localStorage["voluma.theme.v1"]`，先写 `html[data-theme]`；`main.tsx` 再 `initTheme()` |
+| 三态 | 跟随系统 / 浅色 / 深色；手选浅或深后固定，不再被系统覆盖 |
+| 系统跟随 | `matchMedia("(prefers-color-scheme: dark)")` 监听；e2e 用 CDP 模拟系统深/浅，界面实时切换 |
+| 持久化 | 重载后 `data-theme` 与 localStorage 均保持最后选择；启动首帧不闪白 |
+| 纸面不变 | 深色下 `.page-wrap` 背景 `rgb(255,255,255)`，页面中心像素 `255,255,255`；夜间反转仍是独立滤镜 |
+| 覆盖 | 启动页、欢迎页、顶栏 / 画布 / 页码 / toast、目录 / 缩略图 / 搜索 / 注释侧栏、注释工具条 / 便签、页面管理、表单、打印、PDF 工具、主题弹层 |
+| 顶栏 | 1280 CSS px 下 27 个按钮全部在窗口内，无溢出；主题提示贴右对齐不再被裁 |
+| UI e2e | `e2e-theme.mjs` 全过：深色欢迎 / 阅读 / 侧栏 / 页管理 / 工具 / 打印 / 注释条 / 表单，浅色欢迎与阅读；日志 `review-m2/m7-theme-ui.txt` |
+| MCP 回归 | `e2e-mcp.mjs` 在 M7 正式 exe 上 8 工具仍全过，末行 `MCP OK` |
+
+Release 数据：`npx tauri build --no-bundle` 2m18s，`Voluma.exe` 5,120,000 字节（4.88MB），SHA256 `162C5E40C075C01BC9E42234D917EBE1CCDD2940FDDA7498C2E0DABD900579FA`；`npx tauri bundle --bundles nsis` 5.8s，安装包 2,086,363 字节（1.99MiB），SHA256 `CB12345ECFC7F8B234BF6CA8F736385BAA667858F4DF18456BBDB06AA2C91AF3`。两者均未签名。
+
+截图：`review-m2/120-m7-welcome-dark.png` 深色欢迎、`121` 深色阅读、`122` 深色缩略图、`123` 深色页面管理、`124` 深色 PDF 工具、`125` 主题弹层、`126` 浅色欢迎、`127` 浅色阅读、`128` 深色注释条、`129` 深色打印、`130` 深色表单。
+
+实现要点：
+- `theme.ts` 用模块级 snapshot + `useSyncExternalStore`，两个入口共用同一状态；`setThemeMode` 写 localStorage 后同步刷新 `data-theme` 与 `color-scheme`。
+- 深色只覆盖 UI 令牌与少量硬编码表面，`--paper` 始终白色；打印仍由 `@media print` 强制白底。
+- 深色主按钮反转为浅粉底深字；模态、输入框、文件列表、分段控件分别补了暗色表面，不只是把全局背景变黑。
+- 顺手修复最近文件卡片的进度条：`span` 是行内元素，2px 高度不生效导致被撑成半圆，补 `display:block`。
+
+已知限制：
+- 主题偏好按整机保存，不按文档保存；没有自定义强调色、对比度调节。
+- 系统跟随依赖 WebView2 的 `matchMedia`；不支持单独覆盖某个窗口的标题栏颜色。
+- 深色下 PDF 注释颜色保持原色，不做色值映射，避免导出后颜色与屏幕不一致。
+
+## 十一 M8 验收（已完成）
+
+M8 出口：系统本地中文语音逐段朗读，能暂停 / 继续 / 跳段 / 停止，跨页自动继续，页内高亮只读，语音与语速可记忆；真实 WebView 与 900 窄窗通过。
+
+| 项 | 结果 |
+| --- | --- |
+| 引擎 | 页面内 `speechSynthesis` + `SpeechSynthesisUtterance`，WebView2 系统语音，无 Rust SAPI、无联网 |
+| 语音 | 本机 3 个 `zh-CN` 本地语音：Huihui / Kangkang / Yaoyao；默认 Huihui，下拉可切 |
+| 分段 | `tts.ts` 按 baseline 聚行，行距 `>1.85 × 行高` 分段；中文不插空格，英文补空格；单段 ≤220 字，按句末标点切 |
+| 状态机 | `onend` 推进段，页末自动下一页，空文本页跳过，末页进入「已读完」；`cancel()` + run token 防止旧回调误推进 |
+| 语音条 | 播放 / 暂停、上一段 / 下一段、停止、关闭、语音下拉、0.70–1.60× 语速、页码与段进度、当前段文字、六态状态 |
+| 页内高亮 | `.tts-focus` 只读层按当前 viewport 把 PDF rect 转 CSS px；暂停保留，停止 / 读完清除；不写 PDF、不影响打印 |
+| 偏好 | `localStorage["voluma.tts.v1"]` 存语音名与语速；重开恢复；播放中换语音从当前段重读 |
+| 快捷键 | `Alt+R` 开 / 关朗读条，`Esc` 关闭；`F6` 目录、`F9` 页面管理、`F10` 表单、`F11` PDF 工具均不冲突 |
+| 顶栏 | 1280 CSS px 下 28 个按钮无溢出；900 窄窗隐藏文件名与保存胶囊、图标收 24px，28 个入口仍全部在窗口内 |
+| UI e2e | `e2e-tts.mjs` 全过：3 语音、播放 / 暂停 / 继续 / 下一段 / 停止、语速与语音重载持久化、2 页中文样本 16.4s 自动跨页读完、`Alt+R` / `Esc`、900 窄窗；日志 `review-m2/m8-tts-ui.txt`，末行 `TTS UI OK` |
+| MCP 回归 | TTS 是纯前端能力，不新增 MCP 工具；MCP 仍 8 个，`e2e-mcp.mjs` 回归 `MCP OK` |
+
+Release 数据：`npx tauri build --no-bundle` 1m50s，`Voluma.exe` 5,124,608 字节（4.89MB），SHA256 `23DD5679E54B894FB4CE459CD91D2BA634019CDFB7341484EC940E7EB1CA8942`；`npx tauri bundle --bundles nsis` 出 2,091,271 字节（1.99MiB）安装包，SHA256 `5B9696133B83DFA7D44FBC47B8E8A237BD4ADFE98ECD394F5A7A7356AD579FF0`，两者均未签名。MCP 8 工具回归与 Rust 28 条单测同轮通过。
+
+截图：`review-m2/131-m8-tts-dark.png` 深色朗读中与页内高亮、`132-m8-tts-finished.png` 跨页读完、`133-m8-tts-900.png` 900 窄窗朗读条。
+
+实现要点：
+- 朗读条挂在 `Viewer` 最外层，与页码浮层分开；底部 `74px`，不压页码胶囊。
+- `speakTts` 先切页、再取段、再 `cancel()`、最后 `speak()`；每一轮 `run` 自增，暂停 / 跳段 / 换语音后的旧 `onend` 直接丢弃。
+- `finishTts` 清空 `ttsSegments` 进入 `done`，朗读条显示「已读完」，不再遗留上一段的段计数。
+- 朗读从当前页开始，连续模式用 `continuousRef.goToPage`，单页 / 双页直接 `goTo`；页内高亮最多重试 8 次等待页面渲染完成。
+
+已知限制：
+- 只读 PDF 文本层；扫描件与图片文字不读（OCR 放三期）。
+- 不做逐字 `word boundary` 高亮，不导出音频。
+- 音色、断句与停顿由 Windows 语音包决定；纯图片 PDF 无文本可读时会提示并跳过。
+
+## 十二 已定的实现口径
 
 1. **100% = 实际尺寸**：1pt = 96/72 CSS px，与 Acrobat 百分比一致；「适应宽度」按可用宽度反算。
 2. **热路径全在前端**：翻页、缩放、绘制、检索都在 PDF.js；Rust 只做整份字节直传与文件存在性探测。
@@ -240,37 +350,41 @@ M5 构建：加入 `mcp.rs` 后再打 `--no-bundle` 1m36s，`Voluma.exe` 5,059,5
 24. **打印前先消掉匿名行盒**：`@media print` 把 `html/body` 的 `font-size/line-height` 置 0，避免 `<body>` 换行在打印根节点前撑出 21px 行盒；页面与多页板只写 `break-after: page`，删掉旧的 `page-break-after`；页容器比 A4 可打印区再小 2mm 兜底。
 25. **干净版导出保留交互**：只删非 `/Link`、非 `/Widget` 的 `/Annots`；表单字段与超链接不动，随后 `prune_objects()` 清孤立注释对象，兼顾“干净”与“还能填表”。
 
-## 十 相对分册的增补
+## 十三 相对分册的增补
 
 - 顶部图标条新增「导航」组（目录 F6 / 缩略图 F7 / 搜索 Ctrl+F / 注释 F8）、「连续」模式按钮（Ctrl+3）与「注释」组 8 个工具（H/U/S/R/O/P/N/I），其余分组保持附录 A 原样。
 - 注释工具条落在左下（避开居中页码胶囊），玻璃层 + 5 色点 + 「完成」；工具选中态是唯一使用绛红 soft 底的按钮组。
 - 顶栏新增保存状态小胶囊，替代分册里没有的「保存按钮」。
 - 双页对开暂为「当前页 + 下一页」并排，封面单页优先仍按待确认问题 4 留待拍板。
 
-## 十一 自带 MCP
+## 十四 自带 MCP
 
 - **单 exe 双入口**：`main.rs` 先看 `--mcp`，命中就进 `voluma_lib::mcp::run_stdio()`；否则照常 `tauri::Builder` 起窗口。不额外装服务，也不生成第二个 exe。
 - **协议**：JSON-RPC 2.0，stdin/stdout 一行一个 JSON，UTF-8；stdout 只放协议，日志全走 stderr。支持 `initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`。
-- **工具**：`voluma_pdf_info`、`voluma_extract_pages`、`voluma_export_clean`、`voluma_apply_page_plan`、`voluma_flatten_form`；全部复用 GUI 同一套 Rust 函数，不维护第二套逻辑。
-- **安全边界**：只认本机绝对路径，不访问 URL / 云盘；写操作直接写盘，`apply_page_plan` 默认不备份，需留底显式 `backup=true`。
-- **测试**：`node scripts/e2e-mcp.mjs` 拉起 `Voluma.exe --mcp`，验证 5 工具、5 页元信息、提取 3 页、干净导出、表单展平后 0 Widget、第 1 页旋转 90°、缺文件返回 `isError`。
+- **工具**：`voluma_pdf_info`、`voluma_extract_pages`、`voluma_export_clean`、`voluma_apply_page_plan`、`voluma_merge_pdfs`、`voluma_split_pdf`、`voluma_crop_pages`、`voluma_flatten_form`；全部复用 GUI 同一套 Rust 函数，不维护第二套逻辑。
+- **安全边界**：只认本机绝对路径，不访问 URL / 云盘；写操作直接写盘，`apply_page_plan` 默认不备份，需留底显式 `backup=true`；合并 / 拆分 / 裁切只写新文件。
+- **测试**：`node scripts/e2e-mcp.mjs` 拉起 `Voluma.exe --mcp`，验证 8 工具、5 页元信息、提取 3 页、干净导出、表单展平后 0 Widget、第 1 页旋转 90°、合并 10 页、拆分 2/2/1、裁切 CropBox、缺文件返回 `isError`。
 - **配置文档**：`MCP.md` 给出 Claude Desktop / Cursor 的 `mcpServers` 配置与调用示例。
 
-## 十二 安装包
+## 十五 安装包
 
 - **命令**：`npx tauri bundle --bundles nsis`，复用已经打好的 release exe，不再重编。
-- **产物**：`src-tauri/target/release/bundle/nsis/Voluma_0.1.0_x64-setup.exe`，2,062,867 字节（1.97MiB）；根目录留一份同名副本。
-- **内容**：安装包里的 `Voluma.exe` 5,059,584 字节（4.83MB），同一个 exe 既开 GUI 也支持 `--mcp`。
+- **产物**：`src-tauri/target/release/bundle/nsis/Voluma_0.1.0_x64-setup.exe`，2,091,271 字节（1.99MiB）；根目录留一份同名副本。
+- **内容**：安装包里的 `Voluma.exe` 5,124,608 字节（4.89MB），同一个 exe 既开 GUI 也支持 `--mcp`。
 - **签名**：主 exe 与安装包均为 `NotSigned`；正式发布前需要代码签名，否则 SmartScreen 提示未知发布者。
 - **未验**：静默安装 / 卸载、开始菜单项、升级覆盖；GitHub Release 与 FangBox 上架待账号与发布信息确认。
-- **SHA256（NSIS）**：`DE42ADBD4CB8E4B88A3F68E0B73412059948F9BA82202BE53E81887863194DBC`。
+- **SHA256（exe）**：`23DD5679E54B894FB4CE459CD91D2BA634019CDFB7341484EC940E7EB1CA8942`。
+- **SHA256（NSIS）**：`5B9696133B83DFA7D44FBC47B8E8A237BD4ADFE98ECD394F5A7A7356AD579FF0`。
 
-## 十三 明确的未做（按分册排期）
+## 十六 明确的未做（按分册排期）
 
 - M2：~~注释全套 + 注释列表 + sidecar 自动保存~~（已完成，且改为 PDF 原生注释）
 - M3：~~页面旋转/删除/重排/提取/插入、表单填写与展平~~（已完成，中文展平走矢量字形）
 - M4：~~打印、不含注释导出~~（已完成，打印走 WebView2 系统对话框）
-- M5：~~自带 MCP（`--mcp`，5 工具）~~、~~NSIS 安装包~~（已完成，安装包未签名）；代码签名、GitHub Release、上架 FangBox 待做
+- M5：~~自带 MCP（`--mcp`，8 工具）~~、~~NSIS 安装包~~（已完成，安装包未签名）；代码签名、GitHub Release、上架 FangBox 待做
+- M6：~~合并 / 拆分 / 裁切~~（已完成，三页签 + 3 个 MCP 工具，只写新文件）；自动白边识别、合并保表单待做
+- M7：~~界面主题（跟随系统 / 浅色 / 深色）~~（已完成，全部界面覆盖、偏好持久化、PDF 纸面不变）；自定义强调色、高对比度待做
+- M8：~~朗读（系统 TTS 逐段读）~~（已完成，暂停/继续/跳段/停止、跨页自动、页内高亮、偏好持久化）；逐字高亮、音频导出、OCR 取词待做
 - 未做但已知：撤销/重做、注释文字二次编辑、跨页选区拆成多条、增量保存、加密 PDF 写入。
 
-*2026-11-23 ｜ M4 完成，M5 自带 MCP + NSIS 安装包完成*
+*2026-11-24 ｜ M8 朗读完成，系统 TTS 逐段读 + 页内高亮，UI / 跨页 / 窄窗全过*

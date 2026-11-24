@@ -1,5 +1,6 @@
 import React from "react";
 import { BrandMark, IconDoc, IconOpen } from "./Icons";
+import ThemeMenu from "./ThemeMenu";
 import { RecentItem, relativeTime } from "../lib/recents";
 import { humanSize } from "../lib/tauri";
 
@@ -57,7 +58,10 @@ export default function Welcome({ recents, onOpenPicker, onOpenRecent, busy }: P
 
         <div className="welcome-foot">
           <span>本地优先 · 零账号</span>
-          <span>v0.1.0</span>
+          <span className="welcome-foot-right">
+            <ThemeMenu variant="chip" placement="up" />
+            <span>v0.1.0</span>
+          </span>
         </div>
       </aside>
 

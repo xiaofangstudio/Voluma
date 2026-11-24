@@ -21,13 +21,16 @@ import {
   IconRect,
   IconSearch,
   IconSingle,
+  IconSpeaker,
   IconStrike,
   IconThumbs,
+  IconToolkit,
   IconUnderline,
   IconZoomIn,
   IconZoomOut,
 } from "./Icons";
 import type { AnnotKind } from "../lib/annots";
+import ThemeMenu from "./ThemeMenu";
 
 export type ViewMode = "continuous" | "single" | "double";
 export type PanelKind = "outline" | "thumbs" | "search" | "annots" | null;
@@ -43,6 +46,8 @@ type Props = {
   tool: AnnotTool;
   saveState: SaveState;
   pagesOpen: boolean;
+  toolsOpen: boolean;
+  ttsOpen: boolean;
   formsOpen: boolean;
   printOpen: boolean;
   formCount: number;
@@ -56,6 +61,8 @@ type Props = {
   onPanel: (p: PanelKind) => void;
   onTool: (t: AnnotTool) => void;
   onPages: () => void;
+  onTools: () => void;
+  onTts: () => void;
   onForms: () => void;
   onPrint: () => void;
   onExport: () => void;
@@ -100,6 +107,8 @@ export default function TopBar({
   tool,
   saveState,
   pagesOpen,
+  toolsOpen,
+  ttsOpen,
   formsOpen,
   printOpen,
   formCount,
@@ -113,6 +122,8 @@ export default function TopBar({
   onPanel,
   onTool,
   onPages,
+  onTools,
+  onTts,
   onForms,
   onPrint,
   onExport,
@@ -261,7 +272,7 @@ export default function TopBar({
 
       <span className="sep" />
 
-      <div className="group" role="group" aria-label="页面">
+      <div className="group" role="group" aria-label="页面与工具">
         <button
           className="iconbtn"
           onClick={onPages}
@@ -270,6 +281,24 @@ export default function TopBar({
         >
           <IconPages />
           <Tip text="页面管理" keyHint="F9" />
+        </button>
+        <button
+          className="iconbtn"
+          onClick={onTools}
+          aria-pressed={toolsOpen}
+          aria-label="PDF 工具"
+        >
+          <IconToolkit />
+          <Tip text="合并 / 拆分 / 裁切" keyHint="F11" />
+        </button>
+        <button
+          className="iconbtn"
+          onClick={onTts}
+          aria-pressed={ttsOpen}
+          aria-label="朗读"
+        >
+          <IconSpeaker />
+          <Tip text="朗读 · 逐段" keyHint="Alt+R" />
         </button>
       </div>
 
@@ -298,7 +327,8 @@ export default function TopBar({
 
       <span className="sep" />
 
-      <div className="group" role="group" aria-label="关闭">
+      <div className="group" role="group" aria-label="主题与关闭">
+        <ThemeMenu />
         <button className="iconbtn" onClick={onClose} aria-label="关闭文档">
           <IconClose />
           <Tip text="关闭文档" keyHint="Esc" />
